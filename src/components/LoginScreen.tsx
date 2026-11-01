@@ -51,7 +51,7 @@ export default function LoginScreen() {
         return;
       }
 
-      const claimResult = claimData as ClaimResult;
+      const claimResult = (claimData as ClaimResult[])[0] as ClaimResult;
 
       if (!claimResult.success) {
         if (claimResult.status === 'taken') {
