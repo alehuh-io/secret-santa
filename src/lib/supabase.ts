@@ -33,3 +33,10 @@ export interface DrawResult {
   already_drawn: boolean;
   no_participants_remaining: boolean;
 }
+
+export interface ClaimResult {
+  success: boolean;
+  status: 'claimed' | 'already_claimed' | 'taken' | 'not_found';
+  participant_name: string | null;
+  participant_family: string | null;
+}

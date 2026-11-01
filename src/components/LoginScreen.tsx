@@ -1,34 +1,88 @@
-import { useState } from 'react';
-import { Gift, Mail, Loader2, Sparkles } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect } from 'react';
+import { Gift, Mail, Loader2, Sparkles, UserCircle } from 'lucide-react';
+import { supabase, Participant, ClaimResult } from '@/lib/supabase';
 
 export default function LoginScreen() {
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [selectedId, setSelectedId] = useState('');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    supabase
+      .from('participants')
+      .select('*')
+      .order('family')
+      .order('name')
+      .then(({ data }) => {
+        if (data) setParticipants(data as Participant[]);
+      });
+  }, []);
+
+  const families = Array.from(
+    participants.reduce((map, p) => {
+      if (!map.has(p.family)) map.set(p.family, []);
+      map.get(p.family)!.push(p);
+      return map;
+    }, new Map<string, Participant[]>())
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  const selectedParticipant = participants.find((p) => p.id === selectedId);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!selectedId || !email.trim()) return;
 
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: window.location.origin,
-      },
-    });
+    try {
+      // Step 1: Claim the name (bind email to participant)
+      const { data: claimData, error: claimError } = await supabase.rpc(
+        'claim_participant',
+        { p_participant_id: selectedId, p_email: email.trim() }
+      );
+
+      if (claimError) {
+        setError(claimError.message);
+        setLoading(false);
+        return;
+      }
+
+      const claimResult = claimData as ClaimResult;
+
+      if (!claimResult.success) {
+        if (claimResult.status === 'taken') {
+          setError(
+            'That name is already associated with a different email. Please choose your own name.'
+          );
+        } else {
+          setError('Something went wrong. Please try again.');
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: Send the sign-in link
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+
+      if (otpError) {
+        setError(otpError.message);
+        setLoading(false);
+        return;
+      }
+
+      setSent(true);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    }
 
     setLoading(false);
-
-    if (error) {
-      setError(error.message);
-    } else {
-      setSent(true);
-    }
   };
 
   return (
@@ -101,6 +155,47 @@ export default function LoginScreen() {
             </div>
           ) : (
             <form onSubmit={handleLogin} className="space-y-5">
+              {/* Name dropdown */}
+              <div>
+                <label
+                  htmlFor="name-select"
+                  className="block text-sm font-medium text-gray-600 mb-2"
+                >
+                  Your name
+                </label>
+                <div className="relative">
+                  <UserCircle
+                    size={18}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none z-10"
+                  />
+                  <select
+                    id="name-select"
+                    value={selectedId}
+                    onChange={(e) => setSelectedId(e.target.value)}
+                    required
+                    disabled={loading}
+                    className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white/60 text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-transparent transition-all text-sm appearance-none cursor-pointer"
+                  >
+                    <option value="">Select your name...</option>
+                    {families.map(([family, members]) => (
+                      <optgroup key={family} label={`${family} family`}>
+                        {members.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                {selectedParticipant && (
+                  <p className="text-xs text-rose-400 mt-1.5 pl-1">
+                    {selectedParticipant.family} family
+                  </p>
+                )}
+              </div>
+
+              {/* Email field */}
               <div>
                 <label
                   htmlFor="email"
@@ -134,7 +229,7 @@ export default function LoginScreen() {
 
               <button
                 type="submit"
-                disabled={loading || !email.trim()}
+                disabled={loading || !selectedId || !email.trim()}
                 className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-rose-400 to-red-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-rose-200/60 hover:shadow-rose-300/70 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
               >
                 {loading ? (
@@ -151,7 +246,8 @@ export default function LoginScreen() {
               </button>
 
               <p className="text-center text-xs text-gray-400">
-                You'll receive a one-time link to sign in. No password needed.
+                Pick your name once and enter your email — they'll be linked
+                permanently. You can't change your name later.
               </p>
             </form>
           )}
