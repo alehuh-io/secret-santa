@@ -3,24 +3,29 @@ import { Gift, Sparkles, PartyPopper, Frown } from 'lucide-react';
 import { supabase, DrawResult } from '@/lib/supabase';
 
 interface GiftBoxProps {
-  userEmail: string;
-  existingDraw: DrawResult | null;
-  onDrawComplete: (result: DrawResult) => void;
+  participantId: string;
+  password: string;
+  matchName: string | null;
+  onDrawComplete: (matchName: string) => void;
 }
 
-type AnimationState = 'idle' | 'shaking' | 'opening' | 'revealed' | 'empty';
+type AnimationState = 'idle' | 'shaking' | 'opening' | 'empty';
 
 export default function GiftBox({
-  userEmail,
-  existingDraw,
+  participantId,
+  password,
+  matchName,
   onDrawComplete,
 }: GiftBoxProps) {
-  const [state, setState] = useState<AnimationState>(
-    existingDraw?.already_drawn ? 'revealed' : 'idle'
-  );
-  const [result, setResult] = useState<DrawResult | null>(existingDraw);
+  const [state, setState] = useState<AnimationState>('idle');
   const [error, setError] = useState<string | null>(null);
   const drawingRef = useRef(false);
+
+  const fail = (message: string) => {
+    setError(message);
+    setState('idle');
+    drawingRef.current = false;
+  };
 
   const handleDraw = async () => {
     if (drawingRef.current) return;
@@ -31,37 +36,42 @@ export default function GiftBox({
     // Hold the shake animation for suspense
     await new Promise((r) => setTimeout(r, 1800));
 
-    const { data, error: rpcError } = await supabase.rpc(
-      'draw_random_participant',
-      { p_user_email: userEmail }
-    );
+    const { data, error: rpcError } = await supabase.rpc('draw_match', {
+      p_participant_id: participantId,
+      p_password: password,
+    });
 
-    if (rpcError) {
-      setError(rpcError.message);
-      setState('idle');
+    const result = Array.isArray(data) ? (data[0] as DrawResult | undefined) : undefined;
+
+    if (rpcError || !result) {
+      fail('Something went wrong. Please try again.');
+      return;
+    }
+
+    if (result.status === 'invalid_password') {
+      fail('Your password no longer matches. Sign out and sign in again.');
+      return;
+    }
+
+    if (result.status === 'none_left') {
+      setState('empty');
       drawingRef.current = false;
       return;
     }
 
-    const drawResult = data as DrawResult;
-    setResult(drawResult);
-
-    if (drawResult.no_participants_remaining) {
-      setState('empty');
-      onDrawComplete(drawResult);
-      drawingRef.current = false;
+    if (!result.match_name) {
+      fail('Something went wrong. Please try again.');
       return;
     }
 
     setState('opening');
     await new Promise((r) => setTimeout(r, 600));
-    setState('revealed');
-    onDrawComplete(drawResult);
+    onDrawComplete(result.match_name);
     drawingRef.current = false;
   };
 
   // Already drew — show their match
-  if (state === 'revealed' && result?.participant_name) {
+  if (matchName) {
     return (
       <div className="flex flex-col items-center text-center py-6">
         <div className="mb-5 gift-reveal-pop">
@@ -71,7 +81,7 @@ export default function GiftBox({
         </div>
         <p className="text-gray-500 text-sm mb-2">Your gift match is</p>
         <h2 className="text-4xl font-bold text-gray-800 mb-3 tracking-tight gift-reveal-name">
-          {result.participant_name}
+          {matchName}
         </h2>
         <p className="text-gray-400 text-sm max-w-xs">
           You're all set! Buy something special for them. Your match is saved
@@ -92,7 +102,7 @@ export default function GiftBox({
           All names have been drawn
         </h2>
         <p className="text-gray-400 text-sm max-w-xs">
-          Every participant has been matched. Check the list to see who got who!
+          Every participant has been matched. Check the list to see who has drawn!
         </p>
       </div>
     );
@@ -164,7 +174,7 @@ export default function GiftBox({
 
       <button
         onClick={handleDraw}
-        disabled={state === 'shaking'}
+        disabled={state === 'shaking' || state === 'opening'}
         className="flex items-center gap-2 bg-gradient-to-r from-rose-400 to-red-500 text-white font-medium px-7 py-3 rounded-xl shadow-lg shadow-rose-200/60 hover:shadow-rose-300/70 hover:scale-[1.04] active:scale-[0.97] transition-all disabled:opacity-60 disabled:hover:scale-100"
       >
         <Gift size={18} />

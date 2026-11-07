@@ -1,19 +1,33 @@
 import { useState, useEffect } from 'react';
-import { Gift, Mail, Loader2, Sparkles, UserCircle } from 'lucide-react';
-import { supabase, Participant, ClaimResult } from '@/lib/supabase';
+import { Gift, Lock, Loader2, Sparkles, UserCircle } from 'lucide-react';
+import {
+  supabase,
+  Participant,
+  SignInResult,
+  ExchangeSession,
+} from '@/lib/supabase';
 
-export default function LoginScreen() {
+const SIGN_IN_ERRORS: Partial<Record<SignInResult['status'], string>> = {
+  invalid_password: 'That password doesn\'t match this name. Please try again.',
+  weak_password: 'Please choose a password with at least 4 characters.',
+  not_found: 'We couldn\'t find that name. Please refresh and try again.',
+};
+
+interface LoginScreenProps {
+  onSignedIn: (session: ExchangeSession) => void;
+}
+
+export default function LoginScreen({ onSignedIn }: LoginScreenProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     supabase
       .from('participants')
-      .select('*')
+      .select('id, name, family, created_at')
       .order('family')
       .order('name')
       .then(({ data }) => {
@@ -31,58 +45,45 @@ export default function LoginScreen() {
 
   const selectedParticipant = participants.find((p) => p.id === selectedId);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedId || !email.trim()) return;
+    if (!selectedParticipant || !password) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Step 1: Claim the name (bind email to participant)
-      const { data: claimData, error: claimError } = await supabase.rpc(
-        'claim_participant',
-        { p_participant_id: selectedId, p_email: email.trim() }
-      );
-
-      if (claimError) {
-        setError(claimError.message);
-        setLoading(false);
-        return;
-      }
-
-      const claimResult = (claimData as ClaimResult[])[0] as ClaimResult;
-
-      if (!claimResult.success) {
-        if (claimResult.status === 'taken') {
-          setError(
-            'That name is already associated with a different email. Please choose your own name.'
-          );
-        } else {
-          setError('Something went wrong. Please try again.');
-        }
-        setLoading(false);
-        return;
-      }
-
-      // Step 2: Send the sign-in link
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { emailRedirectTo: window.location.origin },
+      const { data, error: rpcError } = await supabase.rpc('sign_in_participant', {
+        p_participant_id: selectedParticipant.id,
+        p_password: password,
       });
 
-      if (otpError) {
-        setError(otpError.message);
-        setLoading(false);
+      const result = Array.isArray(data) ? (data[0] as SignInResult | undefined) : undefined;
+
+      if (rpcError || !result) {
+        setError('Something went wrong. Please try again.');
         return;
       }
 
-      setSent(true);
+      if (result.status !== 'ok' && result.status !== 'created') {
+        setError(
+          SIGN_IN_ERRORS[result.status] ?? 'Something went wrong. Please try again.'
+        );
+        return;
+      }
+
+      onSignedIn({
+        participantId: selectedParticipant.id,
+        participantName: selectedParticipant.name,
+        participantFamily: selectedParticipant.family,
+        password,
+        matchName: result.match_name,
+      });
     } catch {
       setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
@@ -127,130 +128,101 @@ export default function LoginScreen() {
         </div>
 
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl shadow-rose-100/50 border border-rose-100 p-7">
-          {sent ? (
-            <div className="text-center py-6">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-emerald-50 mb-4">
-                <Mail className="text-emerald-500" size={28} />
-              </div>
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">
-                Check your inbox
-              </h2>
-              <p className="text-gray-500 text-sm leading-relaxed">
-                We sent a magic sign-in link to
-                <br />
-                <span className="font-medium text-gray-700">{email}</span>
-              </p>
-              <p className="text-gray-400 text-xs mt-4">
-                Click the link in the email to sign in and draw your gift match.
-              </p>
-              <button
-                onClick={() => {
-                  setSent(false);
-                  setEmail('');
-                }}
-                className="mt-5 text-sm text-rose-500 hover:text-rose-600 font-medium transition-colors"
+          <form onSubmit={handleSignIn} className="space-y-5">
+            {/* Name dropdown */}
+            <div>
+              <label
+                htmlFor="name-select"
+                className="block text-sm font-medium text-gray-600 mb-2"
               >
-                Use a different email
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleLogin} className="space-y-5">
-              {/* Name dropdown */}
-              <div>
-                <label
-                  htmlFor="name-select"
-                  className="block text-sm font-medium text-gray-600 mb-2"
+                Your name
+              </label>
+              <div className="relative">
+                <UserCircle
+                  size={18}
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none z-10"
+                />
+                <select
+                  id="name-select"
+                  value={selectedId}
+                  onChange={(e) => setSelectedId(e.target.value)}
+                  required
+                  disabled={loading}
+                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white/60 text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-transparent transition-all text-sm appearance-none cursor-pointer"
                 >
-                  Your name
-                </label>
-                <div className="relative">
-                  <UserCircle
-                    size={18}
-                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none z-10"
-                  />
-                  <select
-                    id="name-select"
-                    value={selectedId}
-                    onChange={(e) => setSelectedId(e.target.value)}
-                    required
-                    disabled={loading}
-                    className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white/60 text-gray-800 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-transparent transition-all text-sm appearance-none cursor-pointer"
-                  >
-                    <option value="">Select your name...</option>
-                    {families.map(([family, members]) => (
-                      <optgroup key={family} label={`${family} family`}>
-                        {members.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-                {selectedParticipant && (
-                  <p className="text-xs text-rose-400 mt-1.5 pl-1">
-                    {selectedParticipant.family} family
-                  </p>
-                )}
+                  <option value="">Select your name...</option>
+                  {families.map(([family, members]) => (
+                    <optgroup key={family} label={`${family} family`}>
+                      {members.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
-
-              {/* Email field */}
-              <div>
-                <label
-                  htmlFor="email"
-                  className="block text-sm font-medium text-gray-600 mb-2"
-                >
-                  Email address
-                </label>
-                <div className="relative">
-                  <Mail
-                    size={18}
-                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300"
-                  />
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    required
-                    disabled={loading}
-                    className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white/60 text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-transparent transition-all text-sm"
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">
-                  {error}
+              {selectedParticipant && (
+                <p className="text-xs text-rose-400 mt-1.5 pl-1">
+                  {selectedParticipant.family} family
                 </p>
               )}
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading || !selectedId || !email.trim()}
-                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-rose-400 to-red-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-rose-200/60 hover:shadow-rose-300/70 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
+            {/* Password field */}
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-gray-600 mb-2"
               >
-                {loading ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" />
-                    Sending link...
-                  </>
-                ) : (
-                  <>
-                    <Mail size={18} />
-                    Send sign-in link
-                  </>
-                )}
-              </button>
+                Password
+              </label>
+              <div className="relative">
+                <Lock
+                  size={18}
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300"
+                />
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  minLength={4}
+                  disabled={loading}
+                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white/60 text-gray-800 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-transparent transition-all text-sm"
+                />
+              </div>
+            </div>
 
-              <p className="text-center text-xs text-gray-400">
-                Pick your name once and enter your email — they'll be linked
-                permanently. You can't change your name later.
+            {error && (
+              <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">
+                {error}
               </p>
-            </form>
-          )}
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || !selectedId || !password}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-rose-400 to-red-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-rose-200/60 hover:shadow-rose-300/70 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Signing in...
+                </>
+              ) : (
+                'Continue'
+              )}
+            </button>
+
+            <p className="text-center text-xs text-gray-400">
+              First time here? Choose any password (at least 4 characters) and
+              remember it. You'll need it every time you sign in.
+            </p>
+          </form>
         </div>
       </div>
     </div>

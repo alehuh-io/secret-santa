@@ -1,91 +1,47 @@
 import { useState, useEffect, useCallback } from 'react';
-import { LogOut, Mail, Loader2, Gift, Sparkles, RotateCcw } from 'lucide-react';
-import { supabase, Participant, Draw, DrawResult } from '@/lib/supabase';
+import { LogOut, Lock, Loader2, Gift, Sparkles } from 'lucide-react';
+import { supabase, Participant, Draw, ExchangeSession } from '@/lib/supabase';
 import GiftBox from './GiftBox';
 import CheckList from './CheckList';
 
 interface ExchangeScreenProps {
-  userEmail: string;
+  session: ExchangeSession;
+  onMatchDrawn: (matchName: string) => void;
   onSignOut: () => void;
 }
 
 export default function ExchangeScreen({
-  userEmail,
+  session,
+  onMatchDrawn,
   onSignOut,
 }: ExchangeScreenProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [draws, setDraws] = useState<Draw[]>([]);
   const [loading, setLoading] = useState(true);
-  const [myDraw, setMyDraw] = useState<DrawResult | null>(null);
-  const [resending, setResending] = useState(false);
-  const [resendMsg, setResendMsg] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     const [participantsRes, drawsRes] = await Promise.all([
-      supabase.from('participants').select('*').order('name'),
-      supabase
-        .from('draws')
-        .select('id, user_id, user_email, participant_id, drawn_at')
-        .order('drawn_at'),
+      supabase.from('participants').select('id, name, family, created_at').order('name'),
+      supabase.from('draws').select('id, drawer_id, drawn_at').order('drawn_at'),
     ]);
 
-    if (participantsRes.data) setParticipants(participantsRes.data);
+    if (participantsRes.data) setParticipants(participantsRes.data as Participant[]);
     if (drawsRes.data) setDraws(drawsRes.data as Draw[]);
 
-    // Check if current user already drew
-    const { data: myDrawData } = await supabase
-      .from('draws')
-      .select('participant_id')
-      .eq('user_email', userEmail)
-      .maybeSingle();
-
-    if (myDrawData) {
-      const participant = participantsRes.data?.find(
-        (p) => p.id === myDrawData.participant_id
-      );
-      setMyDraw({
-        participant_id: myDrawData.participant_id,
-        participant_name: participant?.name ?? null,
-        already_drawn: true,
-        no_participants_remaining: false,
-      });
-    }
-
     setLoading(false);
-  }, [userEmail]);
+  }, []);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const handleDrawComplete = async (result: DrawResult) => {
-    setMyDraw(result);
-    // Reload draws to update checklist
+  const handleDrawComplete = async (matchName: string) => {
+    onMatchDrawn(matchName);
     const { data: newDraws } = await supabase
       .from('draws')
-      .select('id, user_id, user_email, participant_id, drawn_at')
+      .select('id, drawer_id, drawn_at')
       .order('drawn_at');
     if (newDraws) setDraws(newDraws as Draw[]);
-  };
-
-  const handleResendEmail = async () => {
-    setResending(true);
-    setResendMsg(null);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email: userEmail,
-      options: { emailRedirectTo: window.location.origin },
-    });
-
-    setResending(false);
-
-    if (error) {
-      setResendMsg(`Couldn't send: ${error.message}`);
-    } else {
-      setResendMsg('Sign-in link sent to your email!');
-    }
-
-    setTimeout(() => setResendMsg(null), 4000);
   };
 
   if (loading) {
@@ -108,7 +64,9 @@ export default function ExchangeScreen({
             <h1 className="text-lg font-bold text-gray-800 leading-tight">
               Secret Santa
             </h1>
-            <p className="text-xs text-gray-400">{userEmail}</p>
+            <p className="text-xs text-gray-400">
+              {session.participantName} &middot; {session.participantFamily} family
+            </p>
           </div>
         </div>
 
@@ -126,42 +84,11 @@ export default function ExchangeScreen({
         {/* Gift box area */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-xl shadow-rose-100/40 border border-rose-100 p-6 sm:p-8 flex flex-col justify-center min-h-[400px]">
           <GiftBox
-            userEmail={userEmail}
-            existingDraw={myDraw}
+            participantId={session.participantId}
+            password={session.password}
+            matchName={session.matchName}
             onDrawComplete={handleDrawComplete}
           />
-
-          {/* Resend email button */}
-          <div className="mt-6 pt-5 border-t border-gray-100 flex flex-col items-center">
-            <button
-              onClick={handleResendEmail}
-              disabled={resending}
-              className="flex items-center gap-2 text-sm text-gray-400 hover:text-rose-500 font-medium transition-colors disabled:opacity-50"
-            >
-              {resending ? (
-                <>
-                  <Loader2 size={15} className="animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <RotateCcw size={15} />
-                  Resend sign-in email
-                </>
-              )}
-            </button>
-            {resendMsg && (
-              <p
-                className={`text-xs mt-2 ${
-                  resendMsg.includes("Couldn't")
-                    ? 'text-red-500'
-                    : 'text-emerald-500'
-                }`}
-              >
-                {resendMsg}
-              </p>
-            )}
-          </div>
         </div>
 
         {/* Checklist sidebar */}
@@ -190,8 +117,8 @@ export default function ExchangeScreen({
       {/* Footer */}
       <footer className="max-w-5xl mx-auto mt-8 text-center">
         <p className="text-xs text-gray-300 flex items-center justify-center gap-1.5">
-          <Mail size={12} />
-          Sign in anytime with your email to see your match
+          <Lock size={12} />
+          Sign in anytime with your name and password to see your match
         </p>
       </footer>
     </div>
