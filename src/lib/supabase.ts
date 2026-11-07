@@ -32,7 +32,12 @@ export interface SignInResult {
   match_name: string | null;
 }
 
-export type DrawStatus = 'drawn' | 'already_drawn' | 'none_left' | 'invalid_password';
+export type DrawStatus =
+  | 'drawn'
+  | 'already_drawn'
+  | 'none_left'
+  | 'blocked'
+  | 'invalid_password';
 
 export interface DrawResult {
   status: DrawStatus;

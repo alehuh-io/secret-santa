@@ -53,6 +53,11 @@ export default function GiftBox({
       return;
     }
 
+    if (result.status === 'blocked') {
+      fail('No valid match is available for you right now. Please contact the organizer.');
+      return;
+    }
+
     if (result.status === 'none_left') {
       setState('empty');
       drawingRef.current = false;
