@@ -7,12 +7,10 @@ interface CheckListProps {
 }
 
 export default function CheckList({ participants, draws }: CheckListProps) {
-  // A participant "has drawn" if their email matches a draw's user_email —
+  // A participant "has drawn" if a draw exists with them as the drawer —
   // i.e. they've taken their turn. We deliberately do NOT reveal who was picked.
-  const drawnEmails = new Set(draws.map((d) => d.user_email));
-  const drawnCount = participants.filter((p) =>
-    p.email ? drawnEmails.has(p.email) : false
-  ).length;
+  const drawerIds = new Set(draws.map((d) => d.drawer_id));
+  const drawnCount = participants.filter((p) => drawerIds.has(p.id)).length;
   const totalCount = participants.length;
 
   // Group participants by family
@@ -56,7 +54,7 @@ export default function CheckList({ participants, draws }: CheckListProps) {
             </p>
             <ul className="space-y-0.5">
               {members.map((p) => {
-                const hasDrawn = p.email ? drawnEmails.has(p.email) : false;
+                const hasDrawn = drawerIds.has(p.id);
 
                 return (
                   <li
